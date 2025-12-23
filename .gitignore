@@ -46,6 +46,11 @@ Thumbs.db
 *.tfplan
 *.tfplan.json
 
+# Lambda build artifacts
+infra/lambda.zip
+src/lambda/node_modules/
+src/lambda/package-lock.json
+
 # Coverage and testing
 coverage/
 .nyc_output/

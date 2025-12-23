@@ -40,30 +40,16 @@ function extractPathAndQuery(req) {
 }
 
 /**
- * Gets timestamp from request headers
- * 
- * @param {Object} req - Express request object
- * @returns {string|null} Timestamp from X-Timestamp header, or null if not found
- */
-function getTimestampFromHeader(req) {
-  return req.headers['x-timestamp'] || req.headers['X-Timestamp'] || null;
-}
-
-/**
  * Creates a signature for the request
  * 
  * @param {string} secret - HMAC secret
  * @param {Object} req - Express request object
+ * @param {string} timestamp - ISO timestamp string
  * @returns {string} HMAC-SHA256 signature in hexadecimal format
  */
-function signRequest(secret, req) {
+function signRequest(secret, req, timestamp) {
   const method = req.method.toUpperCase();
   const pathAndQuery = extractPathAndQuery(req);
-  const timestamp = getTimestampFromHeader(req);
-
-  if (!timestamp) {
-    throw new Error('X-Timestamp header is required');
-  }
 
   const canonicalString = buildCanonicalString(method, pathAndQuery, timestamp);
   return computeSignature(secret, canonicalString);
@@ -73,7 +59,6 @@ module.exports = {
   buildCanonicalString,
   computeSignature,
   extractPathAndQuery,
-  getTimestampFromHeader,
   signRequest
 };
 

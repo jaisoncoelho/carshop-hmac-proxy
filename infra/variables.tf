@@ -111,3 +111,32 @@ variable "api_name" {
   default     = "express-hmac-proxy-http-api"
 }
 
+variable "jwt_secret_name" {
+  description = "Secrets Manager secret name containing the JWT signing key"
+  type        = string
+  default     = ""
+}
+
+variable "create_jwt_secret" {
+  description = "Whether to create the JWT secret in Secrets Manager via Terraform"
+  type        = bool
+  default     = false
+}
+
+variable "jwt_secret_value" {
+  description = "JWT secret value (required if create_jwt_secret is true)"
+  type        = string
+  default     = ""
+  sensitive   = true
+  validation {
+    condition     = var.create_jwt_secret == false || (length(trimspace(var.jwt_secret_value)) > 0 && length(trimspace(var.jwt_secret_name)) > 0)
+    error_message = "When create_jwt_secret is true, jwt_secret_name and jwt_secret_value must be set."
+  }
+}
+
+variable "lambda_function_name" {
+  description = "Name for the Lambda function that generates JWT tokens"
+  type        = string
+  default     = ""
+}
+

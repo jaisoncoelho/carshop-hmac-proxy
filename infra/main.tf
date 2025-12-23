@@ -8,12 +8,25 @@ locals {
     },
     var.tags
   )
-  secret_arns = var.create_hmac_secret ? [aws_secretsmanager_secret.hmac[0].arn] : var.secrets_manager_resource_arns
+  secret_arns = concat(
+    var.create_hmac_secret ? [aws_secretsmanager_secret.hmac[0].arn] : [],
+    var.create_jwt_secret ? [aws_secretsmanager_secret.jwt[0].arn] : [],
+    # Include ARNs for secrets that exist but weren't created by Terraform
+    var.hmac_secret_name != "" && !var.create_hmac_secret ? [
+      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.hmac_secret_name}*"
+    ] : [],
+    var.jwt_secret_name != "" && !var.create_jwt_secret ? [
+      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.jwt_secret_name}*"
+    ] : [],
+    var.secrets_manager_resource_arns
+  )
 }
 
 data "aws_availability_zones" "available" {
   state = "available"
 }
+
+data "aws_caller_identity" "current" {}
 
 # VPC
 resource "aws_vpc" "main" {
@@ -150,6 +163,118 @@ resource "aws_secretsmanager_secret_version" "hmac" {
   count         = var.create_hmac_secret ? 1 : 0
   secret_id     = aws_secretsmanager_secret.hmac[0].id
   secret_string = var.hmac_secret_value
+}
+
+resource "aws_secretsmanager_secret" "jwt" {
+  count = var.create_jwt_secret ? 1 : 0
+
+  name = var.jwt_secret_name
+  tags = merge(local.tags, { Name = "${local.name_prefix}-jwt" })
+}
+
+resource "aws_secretsmanager_secret_version" "jwt" {
+  count         = var.create_jwt_secret ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.jwt[0].id
+  secret_string = var.jwt_secret_value
+}
+
+# Lambda function for JWT generation
+# Install dependencies first
+resource "null_resource" "lambda_dependencies" {
+  triggers = {
+    package_json = filemd5("${path.module}/../src/lambda/package.json")
+  }
+
+  provisioner "local-exec" {
+    command     = "cd ${path.module}/../src/lambda && npm install --production"
+    interpreter = ["bash", "-c"]
+  }
+}
+
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_dir  = "${path.module}/../src/lambda"
+  output_path = "${path.module}/lambda.zip"
+  excludes    = ["package.json", "package-lock.json"]
+
+  depends_on = [null_resource.lambda_dependencies]
+}
+
+resource "aws_lambda_function" "jwt_generator" {
+  filename         = data.archive_file.lambda_zip.output_path
+  function_name    = var.lambda_function_name != "" ? var.lambda_function_name : "${local.name_prefix}-jwt-generator"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "jwt-generator.handler"
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  runtime          = "nodejs20.x"
+  timeout          = 30
+  memory_size      = 256
+
+  tags = merge(local.tags, {
+    Name = "${local.name_prefix}-jwt-generator"
+  })
+}
+
+# Lambda execution role
+data "aws_iam_policy_document" "lambda_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "lambda_exec" {
+  name               = "${local.name_prefix}-lambda-exec"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# IAM policy for ECS task role to invoke Lambda
+data "aws_iam_policy_document" "task_lambda_invoke" {
+  statement {
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.jwt_generator.arn]
+  }
+}
+
+resource "aws_iam_policy" "task_lambda_invoke" {
+  name   = "${local.name_prefix}-task-lambda-invoke"
+  policy = data.aws_iam_policy_document.task_lambda_invoke.json
+}
+
+resource "aws_iam_role_policy_attachment" "task_lambda_invoke_attach" {
+  role       = aws_iam_role.task_role.name
+  policy_arn = aws_iam_policy.task_lambda_invoke.arn
+}
+
+# IAM policy for ECS task role to read JWT secret
+data "aws_iam_policy_document" "task_jwt_secret" {
+  statement {
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = var.create_jwt_secret ? [
+      aws_secretsmanager_secret.jwt[0].arn
+    ] : var.jwt_secret_name != "" ? [
+      "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.jwt_secret_name}*"
+    ] : ["*"]
+  }
+}
+
+resource "aws_iam_policy" "task_jwt_secret" {
+  name   = "${local.name_prefix}-task-jwt-secret"
+  policy = data.aws_iam_policy_document.task_jwt_secret.json
+}
+
+resource "aws_iam_role_policy_attachment" "task_jwt_secret_attach" {
+  role       = aws_iam_role.task_role.name
+  policy_arn = aws_iam_policy.task_jwt_secret.arn
 }
 
 # IAM roles
@@ -305,6 +430,8 @@ resource "aws_ecs_task_definition" "app" {
         { name = "PORT", value = tostring(var.container_port) },
         { name = "TARGET_BASE_URL", value = var.target_base_url },
         { name = "HMAC_SECRET_NAME", value = var.hmac_secret_name },
+        { name = "JWT_SECRET_NAME", value = var.jwt_secret_name },
+        { name = "LAMBDA_FUNCTION_NAME", value = var.lambda_function_name != "" ? var.lambda_function_name : "${local.name_prefix}-jwt-generator" },
         { name = "AWS_REGION", value = var.region }
       ]
       logConfiguration = {
@@ -382,4 +509,3 @@ resource "aws_apigatewayv2_stage" "default" {
   auto_deploy = true
   tags        = local.tags
 }
-
