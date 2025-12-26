@@ -143,7 +143,8 @@ app.post('/auth/:cpf', createSignatureMiddleware, async (req, res) => {
       });
     }
 
-    const client = clientResponse.data;
+    // Extract client data from nested data property
+    const client = clientResponse.data?.data || clientResponse.data;
     
     // Validate client data
     if (!client.id || !client.email) {
@@ -164,6 +165,14 @@ app.post('/auth/:cpf', createSignatureMiddleware, async (req, res) => {
     }
 
     const jwtSecret = await getSecret(JWT_SECRET_NAME, AWS_REGION);
+    
+    // Log secret retrieval (truncated for security)
+    if (jwtSecret) {
+      const secretPreview = jwtSecret.length > 8 ? `${jwtSecret.slice(0, 8)}...` : '***';
+      console.log(`[auth] JWT secret retrieved (length: ${jwtSecret.length}, preview: ${secretPreview})`);
+    } else {
+      console.error('[auth] JWT secret is null or undefined');
+    }
 
     // 3. Invoke Lambda function to generate JWT
     if (!LAMBDA_FUNCTION_NAME) {
@@ -177,6 +186,7 @@ app.post('/auth/:cpf', createSignatureMiddleware, async (req, res) => {
     const lambdaPayload = {
       userId: client.id,
       email: client.email,
+      role: client.role || 'user', // Provide default role if not present
       jwtSecret: jwtSecret
     };
 

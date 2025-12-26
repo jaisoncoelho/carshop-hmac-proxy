@@ -33,7 +33,7 @@ exports.handler = async (event) => {
     const payload = {
       sub: userId,
       email: email,
-      role: 'client',
+      role: 'USER',
       iat: now,
       jti: generateUniqueId()
     };
