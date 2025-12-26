@@ -71,26 +71,9 @@ variable "target_base_url" {
 }
 
 variable "hmac_secret_name" {
-  description = "Secrets Manager secret name containing the HMAC key"
+  description = "Secrets Manager secret name containing the HMAC key (must exist externally)"
   type        = string
   default     = ""
-}
-
-variable "create_hmac_secret" {
-  description = "Whether to create the HMAC secret in Secrets Manager via Terraform"
-  type        = bool
-  default     = false
-}
-
-variable "hmac_secret_value" {
-  description = "HMAC secret value (required if create_hmac_secret is true)"
-  type        = string
-  default     = ""
-  sensitive   = true
-  validation {
-    condition     = var.create_hmac_secret == false || (length(trimspace(var.hmac_secret_value)) > 0 && length(trimspace(var.hmac_secret_name)) > 0)
-    error_message = "When create_hmac_secret is true, hmac_secret_name and hmac_secret_value must be set."
-  }
 }
 
 variable "secrets_manager_resource_arns" {
@@ -112,26 +95,9 @@ variable "api_name" {
 }
 
 variable "jwt_secret_name" {
-  description = "Secrets Manager secret name containing the JWT signing key"
+  description = "Secrets Manager secret name containing the JWT signing key (must exist externally)"
   type        = string
   default     = ""
-}
-
-variable "create_jwt_secret" {
-  description = "Whether to create the JWT secret in Secrets Manager via Terraform"
-  type        = bool
-  default     = false
-}
-
-variable "jwt_secret_value" {
-  description = "JWT secret value (required if create_jwt_secret is true)"
-  type        = string
-  default     = ""
-  sensitive   = true
-  validation {
-    condition     = var.create_jwt_secret == false || (length(trimspace(var.jwt_secret_value)) > 0 && length(trimspace(var.jwt_secret_name)) > 0)
-    error_message = "When create_jwt_secret is true, jwt_secret_name and jwt_secret_value must be set."
-  }
 }
 
 variable "lambda_function_name" {

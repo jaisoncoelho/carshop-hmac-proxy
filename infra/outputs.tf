@@ -30,8 +30,3 @@ output "http_api_endpoint" {
   value = aws_apigatewayv2_api.http_api.api_endpoint
 }
 
-output "hmac_secret_arn" {
-  value       = var.create_hmac_secret ? aws_secretsmanager_secret.hmac[0].arn : null
-  description = "ARN of the HMAC secret if managed by Terraform"
-}
-

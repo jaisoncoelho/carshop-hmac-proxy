@@ -9,13 +9,11 @@ locals {
     var.tags
   )
   secret_arns = concat(
-    var.create_hmac_secret ? [aws_secretsmanager_secret.hmac[0].arn] : [],
-    var.create_jwt_secret ? [aws_secretsmanager_secret.jwt[0].arn] : [],
-    # Include ARNs for secrets that exist but weren't created by Terraform
-    var.hmac_secret_name != "" && !var.create_hmac_secret ? [
+    # Include ARNs for secrets that exist externally
+    var.hmac_secret_name != "" ? [
       "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.hmac_secret_name}*"
     ] : [],
-    var.jwt_secret_name != "" && !var.create_jwt_secret ? [
+    var.jwt_secret_name != "" ? [
       "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.jwt_secret_name}*"
     ] : [],
     var.secrets_manager_resource_arns
@@ -151,33 +149,6 @@ resource "aws_ecr_repository" "app" {
   })
 }
 
-# Secrets Manager (optional creation)
-resource "aws_secretsmanager_secret" "hmac" {
-  count = var.create_hmac_secret ? 1 : 0
-
-  name = var.hmac_secret_name
-  tags = merge(local.tags, { Name = "${local.name_prefix}-hmac" })
-}
-
-resource "aws_secretsmanager_secret_version" "hmac" {
-  count         = var.create_hmac_secret ? 1 : 0
-  secret_id     = aws_secretsmanager_secret.hmac[0].id
-  secret_string = var.hmac_secret_value
-}
-
-resource "aws_secretsmanager_secret" "jwt" {
-  count = var.create_jwt_secret ? 1 : 0
-
-  name = var.jwt_secret_name
-  tags = merge(local.tags, { Name = "${local.name_prefix}-jwt" })
-}
-
-resource "aws_secretsmanager_secret_version" "jwt" {
-  count         = var.create_jwt_secret ? 1 : 0
-  secret_id     = aws_secretsmanager_secret.jwt[0].id
-  secret_string = var.jwt_secret_value
-}
-
 # Lambda function for JWT generation
 # Install dependencies first
 resource "null_resource" "lambda_dependencies" {
@@ -259,9 +230,7 @@ resource "aws_iam_role_policy_attachment" "task_lambda_invoke_attach" {
 data "aws_iam_policy_document" "task_jwt_secret" {
   statement {
     actions = ["secretsmanager:GetSecretValue"]
-    resources = var.create_jwt_secret ? [
-      aws_secretsmanager_secret.jwt[0].arn
-    ] : var.jwt_secret_name != "" ? [
+    resources = var.jwt_secret_name != "" ? [
       "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:${var.jwt_secret_name}*"
     ] : ["*"]
   }
