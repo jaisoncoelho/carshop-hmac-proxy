@@ -146,11 +146,11 @@ app.post('/auth/:cpf', createSignatureMiddleware, async (req, res) => {
     const client = clientResponse.data;
     
     // Validate client data
-    if (!client.id || !client.email || !client.role) {
+    if (!client.id || !client.email) {
       console.error('[auth] Invalid client data:', client);
       return res.status(500).json({
         error: 'Invalid client data',
-        message: 'Client data missing required fields (id, email, role)'
+        message: 'Client data missing required fields (id, email)'
       });
     }
 
@@ -177,7 +177,6 @@ app.post('/auth/:cpf', createSignatureMiddleware, async (req, res) => {
     const lambdaPayload = {
       userId: client.id,
       email: client.email,
-      role: client.role,
       jwtSecret: jwtSecret
     };
 

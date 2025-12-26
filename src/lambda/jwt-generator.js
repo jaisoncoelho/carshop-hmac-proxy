@@ -10,20 +10,20 @@ function generateUniqueId() {
 
 /**
  * Lambda handler to generate JWT token
- * @param {Object} event - Event payload containing userId, email, role, jwtSecret
+ * @param {Object} event - Event payload containing userId, email, jwtSecret
  * @returns {Object} Response with token, expires_in, and token_type
  */
 exports.handler = async (event) => {
   try {
-    const { userId, email, role, jwtSecret } = event;
+    const { userId, email, jwtSecret } = event;
 
     // Validate required fields
-    if (!userId || !email || !role || !jwtSecret) {
+    if (!userId || !email || !jwtSecret) {
       return {
         statusCode: 400,
         body: JSON.stringify({
           error: 'Missing required fields',
-          message: 'userId, email, role, and jwtSecret are required'
+          message: 'userId, email and jwtSecret are required'
         })
       };
     }
@@ -33,7 +33,7 @@ exports.handler = async (event) => {
     const payload = {
       sub: userId,
       email: email,
-      role: role,
+      role: 'client',
       iat: now,
       jti: generateUniqueId()
     };
