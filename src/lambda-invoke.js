@@ -9,11 +9,25 @@ const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda');
  */
 async function invokeLambda(functionName, payload, region = process.env.AWS_REGION || 'us-east-1') {
   try {
+    // Log payload details (mask jwtSecret for security)
+    const logPayload = { ...payload };
+    if (logPayload.jwtSecret) {
+      const secretPreview = logPayload.jwtSecret.length > 8 
+        ? `${logPayload.jwtSecret.slice(0, 8)}...` 
+        : '***';
+      logPayload.jwtSecret = secretPreview;
+      logPayload.jwtSecretLength = payload.jwtSecret.length;
+    }
+    console.log(`[lambda-invoke] Sending payload to ${functionName}:`, JSON.stringify(logPayload, null, 2));
+
     const client = new LambdaClient({ region });
+    const payloadString = JSON.stringify(payload);
+    console.log(`[lambda-invoke] Payload size: ${payloadString.length} bytes`);
+    
     const command = new InvokeCommand({
       FunctionName: functionName,
       InvocationType: 'RequestResponse', // Synchronous invocation
-      Payload: JSON.stringify(payload)
+      Payload: payloadString
     });
 
     const response = await client.send(command);
@@ -22,9 +36,14 @@ async function invokeLambda(functionName, payload, region = process.env.AWS_REGI
     if (response.Payload) {
       const responseBody = JSON.parse(Buffer.from(response.Payload).toString());
       
+      console.log(`[lambda-invoke] Lambda response status: ${responseBody.statusCode || 'N/A'}`);
+      
       // If Lambda returned an error status code, throw an error
       if (responseBody.statusCode && responseBody.statusCode >= 400) {
-        const errorBody = JSON.parse(responseBody.body);
+        const errorBody = typeof responseBody.body === 'string' 
+          ? JSON.parse(responseBody.body) 
+          : responseBody.body;
+        console.error(`[lambda-invoke] Lambda error:`, errorBody);
         throw new Error(errorBody.message || errorBody.error || 'Lambda function returned an error');
       }
 
@@ -37,6 +56,7 @@ async function invokeLambda(functionName, payload, region = process.env.AWS_REGI
         }
       }
 
+      console.log(`[lambda-invoke] Lambda response body:`, JSON.stringify(responseBody.body, null, 2));
       return responseBody;
     }
 
