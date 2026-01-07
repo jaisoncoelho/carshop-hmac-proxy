@@ -100,8 +100,13 @@ variable "jwt_secret_name" {
   default     = ""
 }
 
+variable "lambda_function_arn" {
+  description = "ARN of the Lambda function that generates JWT tokens (deployed separately in carshop-jwt-lambda repository)"
+  type        = string
+}
+
 variable "lambda_function_name" {
-  description = "Name for the Lambda function that generates JWT tokens"
+  description = "Name of the Lambda function (optional, can be extracted from ARN if not provided). Used for LAMBDA_FUNCTION_NAME environment variable."
   type        = string
   default     = ""
 }

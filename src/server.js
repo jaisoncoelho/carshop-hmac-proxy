@@ -232,13 +232,25 @@ app.all('*', createSignatureMiddleware, async (req, res) => {
     // Construct target URL
     const targetUrl = `${TARGET_BASE_URL}${req.originalUrl || req.url}`;
 
+    // Prepare headers - copy from request but clean up problematic ones
+    const headers = { ...req.headers };
+    
+    // Remove headers that shouldn't be forwarded or will be set by axios
+    delete headers.host;
+    delete headers['content-length']; // Let axios calculate this automatically
+    
+    // Ensure Content-Type is set for JSON bodies
+    if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !headers['content-type']) {
+      headers['content-type'] = 'application/json';
+    }
+
     // Prepare request configuration
     const config = {
       method: req.method,
       url: targetUrl,
       headers: {
-        ...req.headers,
-        // Ensure HMAC header is included (already set by middleware)
+        ...headers,
+        // Ensure HMAC headers are included (already set by middleware)
         'x-hmac-signature': req.headers['x-hmac-signature'],
         'x-hmac-timestamp': req.headers['x-hmac-timestamp']
       },
@@ -249,9 +261,6 @@ app.all('*', createSignatureMiddleware, async (req, res) => {
       // Set timeout
       timeout: 30000
     };
-
-    // Remove host header to avoid conflicts
-    delete config.headers.host;
 
     // Log the full request being forwarded
     console.log('[proxy] Forwarding request to target:');
@@ -295,7 +304,7 @@ app.all('*', createSignatureMiddleware, async (req, res) => {
         error: 'Bad Gateway',
         message: 'Unable to connect to target server'
       });
-    } else if (error.code === 'ETIMEDOUT') {
+    } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
       res.status(504).json({
         error: 'Gateway Timeout',
         message: 'Request to target server timed out'

@@ -1,0 +1,8 @@
+export AWS_PROFILE=jaison
+export TF_VAR_target_base_url="http://49.13.94.165"
+export TF_VAR_hmac_secret_name="express-hmac-proxy-secret"
+export TF_VAR_jwt_secret_name="jwt-secret"
+export TF_VAR_lambda_function_arn="arn:aws:lambda:us-east-1:503775269952:function:carshop-jwt-lambda-prod"
+export TF_VAR_desired_count=1
+
+terraform apply -auto-approve

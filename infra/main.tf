@@ -18,6 +18,9 @@ locals {
     ] : [],
     var.secrets_manager_resource_arns
   )
+  # Extract Lambda function name from ARN if not explicitly provided
+  # ARN format: arn:aws:lambda:REGION:ACCOUNT_ID:function:FUNCTION_NAME
+  lambda_function_name = var.lambda_function_name != "" ? var.lambda_function_name : element(split(":", var.lambda_function_arn), length(split(":", var.lambda_function_arn)) - 1)
 }
 
 data "aws_availability_zones" "available" {
@@ -149,70 +152,12 @@ resource "aws_ecr_repository" "app" {
   })
 }
 
-# Lambda function for JWT generation
-# Install dependencies first
-resource "null_resource" "lambda_dependencies" {
-  triggers = {
-    package_json = filemd5("${path.module}/../src/lambda/package.json")
-  }
-
-  provisioner "local-exec" {
-    command     = "cd ${path.module}/../src/lambda && npm install --production"
-    interpreter = ["bash", "-c"]
-  }
-}
-
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  source_dir  = "${path.module}/../src/lambda"
-  output_path = "${path.module}/lambda.zip"
-  excludes    = ["package.json", "package-lock.json"]
-
-  depends_on = [null_resource.lambda_dependencies]
-}
-
-resource "aws_lambda_function" "jwt_generator" {
-  filename         = data.archive_file.lambda_zip.output_path
-  function_name    = var.lambda_function_name != "" ? var.lambda_function_name : "${local.name_prefix}-jwt-generator"
-  role             = aws_iam_role.lambda_exec.arn
-  handler          = "jwt-generator.handler"
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
-  runtime          = "nodejs20.x"
-  timeout          = 30
-  memory_size      = 256
-
-  tags = merge(local.tags, {
-    Name = "${local.name_prefix}-jwt-generator"
-  })
-}
-
-# Lambda execution role
-data "aws_iam_policy_document" "lambda_assume" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "lambda_exec" {
-  name               = "${local.name_prefix}-lambda-exec"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
-  tags               = local.tags
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-# IAM policy for ECS task role to invoke Lambda
+# IAM policy for ECS task role to invoke external Lambda function
+# Lambda function is deployed separately in carshop-jwt-lambda repository
 data "aws_iam_policy_document" "task_lambda_invoke" {
   statement {
     actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.jwt_generator.arn]
+    resources = [var.lambda_function_arn]
   }
 }
 
@@ -400,7 +345,7 @@ resource "aws_ecs_task_definition" "app" {
         { name = "TARGET_BASE_URL", value = var.target_base_url },
         { name = "HMAC_SECRET_NAME", value = var.hmac_secret_name },
         { name = "JWT_SECRET_NAME", value = var.jwt_secret_name },
-        { name = "LAMBDA_FUNCTION_NAME", value = var.lambda_function_name != "" ? var.lambda_function_name : "${local.name_prefix}-jwt-generator" },
+        { name = "LAMBDA_FUNCTION_NAME", value = local.lambda_function_name },
         { name = "AWS_REGION", value = var.region }
       ]
       logConfiguration = {
