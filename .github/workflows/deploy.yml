@@ -113,7 +113,7 @@ jobs:
   terraform-infrastructure:
     name: Terraform Infrastructure
     runs-on: ubuntu-latest
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'build-and-deploy' || github.event.inputs.action == 'terraform-only'))
+    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'build-and-deploy' || github.event.inputs.action == 'terraform-only' || github.event.inputs.action == 'deploy-only'))
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -187,10 +187,17 @@ jobs:
   deploy-to-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
-    needs: [build-and-push-image, terraform-infrastructure]
+    needs: 
+      - build-and-push-image
+      - terraform-infrastructure
     if: |
-      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
-      (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'build-and-deploy' || github.event.inputs.action == 'deploy-only'))
+      always() &&
+      (
+        (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+        (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'build-and-deploy' || github.event.inputs.action == 'deploy-only'))
+      ) &&
+      (needs.build-and-push-image.result == 'success' || needs.build-and-push-image.result == 'skipped') &&
+      needs.terraform-infrastructure.result == 'success'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
