@@ -58,7 +58,9 @@ jobs:
   build-and-push-image:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: run-tests
+    needs: 
+      - run-tests
+      - terraform-infrastructure
     if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'build-and-deploy' || github.event.inputs.action == 'build-only'))
     permissions:
       contents: read
@@ -73,26 +75,30 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
-          terraform_wrapper: false
-
-      - name: Terraform Init (for ECR URL)
-        working-directory: infra
-        run: terraform init
-
       - name: Get ECR Repository URL
         id: ecr
-        working-directory: infra
+        env:
+          TF_VAR_target_base_url: ${{ vars.TARGET_BASE_URL }}
+          TF_VAR_hmac_secret_name: ${{ vars.HMAC_SECRET_NAME }}
+          TF_VAR_jwt_secret_name: ${{ vars.JWT_SECRET_NAME }}
+          TF_VAR_lambda_function_arn: ${{ vars.LAMBDA_FUNCTION_ARN }}
+          TF_VAR_desired_count: ${{ vars.DESIRED_COUNT || '1' }}
         run: |
-          ECR_URL=$(terraform output -raw ecr_repository_url 2>/dev/null || echo "")
-          if [ -z "$ECR_URL" ]; then
-            # If ECR doesn't exist yet, use default naming convention
-            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            ECR_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/express-hmac-proxy"
+          # Query AWS directly for the ECR repository URL (created by terraform-infrastructure job)
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REPO_NAME="express-hmac-proxy"
+          
+          # Try to get the repository URL from AWS
+          ECR_URL=$(aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region ${{ env.AWS_REGION }} --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
+          
+          # Fallback to constructing the URL if repository exists but query failed
+          if [ -z "$ECR_URL" ] || [ "$ECR_URL" = "None" ]; then
+            ECR_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${ECR_REPO_NAME}"
+            echo "Using constructed ECR URL: $ECR_URL"
+          else
+            echo "Found ECR repository: $ECR_URL"
           fi
+          
           echo "repository=$ECR_URL" >> $GITHUB_OUTPUT
           echo "ECR Repository: $ECR_URL"
 
@@ -113,7 +119,7 @@ jobs:
   terraform-infrastructure:
     name: Terraform Infrastructure
     runs-on: ubuntu-latest
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'build-and-deploy' || github.event.inputs.action == 'terraform-only' || github.event.inputs.action == 'deploy-only'))
+    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'build-and-deploy' || github.event.inputs.action == 'terraform-only' || github.event.inputs.action == 'deploy-only' || github.event.inputs.action == 'build-only'))
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -180,9 +186,14 @@ jobs:
         run: |
           echo "## Infrastructure Details" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**API Gateway Endpoint:** \`$(terraform output -raw http_api_endpoint)\`" >> $GITHUB_STEP_SUMMARY
-          echo "**ECS Cluster:** \`$(terraform output -raw ecs_cluster_name)\`" >> $GITHUB_STEP_SUMMARY
-          echo "**ECR Repository:** \`$(terraform output -raw ecr_repository_url)\`" >> $GITHUB_STEP_SUMMARY
+          
+          API_ENDPOINT=$(terraform output -raw http_api_endpoint)
+          CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)
+          ECR_URL=$(terraform output -raw ecr_repository_url)
+          
+          echo "**API Gateway Endpoint:** \`$API_ENDPOINT\`" >> $GITHUB_STEP_SUMMARY
+          echo "**ECS Cluster:** \`$CLUSTER_NAME\`" >> $GITHUB_STEP_SUMMARY
+          echo "**ECR Repository:** \`$ECR_URL\`" >> $GITHUB_STEP_SUMMARY
 
   deploy-to-ecs:
     name: Deploy to ECS
@@ -209,26 +220,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.6.0
-          terraform_wrapper: false
-
       - name: Get ECS Cluster and Service Names
         id: ecs
-        working-directory: infra
-        env:
-          TF_VAR_target_base_url: ${{ vars.TARGET_BASE_URL }}
-          TF_VAR_hmac_secret_name: ${{ vars.HMAC_SECRET_NAME }}
-          TF_VAR_jwt_secret_name: ${{ vars.JWT_SECRET_NAME }}
-          TF_VAR_lambda_function_arn: ${{ vars.LAMBDA_FUNCTION_ARN }}
-          TF_VAR_desired_count: ${{ vars.DESIRED_COUNT || '1' }}
         run: |
-          terraform init > /dev/null 2>&1
-          CLUSTER_NAME=$(terraform output -raw ecs_cluster_name 2>/dev/null || echo "express-hmac-proxy-prod-cluster")
+          # Query AWS directly for ECS cluster and service names (created by terraform-infrastructure job)
+          # Cluster name follows pattern: {project}-{environment}-cluster
+          PROJECT="express-hmac-proxy"
+          ENVIRONMENT="prod"
+          CLUSTER_NAME="${PROJECT}-${ENVIRONMENT}-cluster"
+          
+          # Verify cluster exists in AWS
+          if aws ecs describe-clusters --clusters "$CLUSTER_NAME" --region ${{ env.AWS_REGION }} --query 'clusters[0].clusterName' --output text 2>/dev/null | grep -q "$CLUSTER_NAME"; then
+            echo "Found ECS cluster: $CLUSTER_NAME"
+          else
+            echo "Warning: ECS cluster $CLUSTER_NAME not found, using default name"
+          fi
+          
           # Service name follows pattern: {project}-{environment}-svc
-          SERVICE_NAME="${CLUSTER_NAME%-cluster}-svc"
+          SERVICE_NAME="${PROJECT}-${ENVIRONMENT}-svc"
+          
           echo "cluster=$CLUSTER_NAME" >> $GITHUB_OUTPUT
           echo "service=$SERVICE_NAME" >> $GITHUB_OUTPUT
           echo "Cluster: $CLUSTER_NAME"

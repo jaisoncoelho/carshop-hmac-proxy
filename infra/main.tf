@@ -134,7 +134,7 @@ resource "aws_route" "private_nat" {
 resource "aws_route_table_association" "private_assoc" {
   for_each = aws_subnet.private
 
-  subnet_id      = each.value.id
+  subnet_id = each.value.id
   # pick matching private RT by AZ position
   route_table_id = aws_route_table.private[element(keys(aws_nat_gateway.nat), index(var.private_subnet_cidrs, each.key))].id
 }
@@ -371,8 +371,8 @@ resource "aws_ecs_service" "app" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets         = values(aws_subnet.private)[*].id
-    security_groups = [aws_security_group.tasks.id]
+    subnets          = values(aws_subnet.private)[*].id
+    security_groups  = [aws_security_group.tasks.id]
     assign_public_ip = false
   }
 
