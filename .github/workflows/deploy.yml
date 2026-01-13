@@ -31,6 +31,7 @@ on:
           - deploy-only
           - build-only
           - terraform-only
+          - destroy
 
 env:
   AWS_REGION: us-east-1
@@ -39,6 +40,7 @@ jobs:
   run-tests:
     name: Run Tests
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.action != 'destroy'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -195,6 +197,54 @@ jobs:
           echo "**ECS Cluster:** \`$CLUSTER_NAME\`" >> $GITHUB_STEP_SUMMARY
           echo "**ECR Repository:** \`$ECR_URL\`" >> $GITHUB_STEP_SUMMARY
 
+  terraform-destroy:
+    name: Terraform Destroy Infrastructure
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: infra
+        env:
+          TF_VAR_target_base_url: ${{ vars.TARGET_BASE_URL }}
+          TF_VAR_hmac_secret_name: ${{ vars.HMAC_SECRET_NAME }}
+          TF_VAR_jwt_secret_name: ${{ vars.JWT_SECRET_NAME }}
+          TF_VAR_lambda_function_arn: ${{ vars.LAMBDA_FUNCTION_ARN }}
+          TF_VAR_desired_count: ${{ vars.DESIRED_COUNT || '1' }}
+        run: terraform init
+
+      - name: Terraform Destroy
+        working-directory: infra
+        env:
+          TF_VAR_target_base_url: ${{ vars.TARGET_BASE_URL }}
+          TF_VAR_hmac_secret_name: ${{ vars.HMAC_SECRET_NAME }}
+          TF_VAR_jwt_secret_name: ${{ vars.JWT_SECRET_NAME }}
+          TF_VAR_lambda_function_arn: ${{ vars.LAMBDA_FUNCTION_ARN }}
+          TF_VAR_desired_count: ${{ vars.DESIRED_COUNT || '1' }}
+        run: terraform destroy -auto-approve
+
+      - name: Destroy Summary
+        working-directory: infra
+        run: |
+          echo "## Infrastructure Destroyed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All AWS resources have been destroyed." >> $GITHUB_STEP_SUMMARY
+
   deploy-to-ecs:
     name: Deploy to ECS
     runs-on: ubuntu-latest
@@ -286,4 +336,3 @@ jobs:
             --region ${{ env.AWS_REGION }} \
             --query 'services[0].{ServiceName:serviceName,Status:status,DesiredCount:desiredCount,RunningCount:runningCount,PendingCount:pendingCount}' \
             --output table
-
